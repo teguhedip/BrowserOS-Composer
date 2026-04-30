@@ -1,0 +1,208 @@
+# ===========================================================
+#  BrowserOS — self-contained Dockge stack
+#  AI-native Chromium browser running in Docker with noVNC
+# ===========================================================
+#
+#  Access points after deploy:
+#    • Browser GUI (noVNC):    http://<HOST>:6080
+#    • MCP Server (HTTP):      http://<HOST>:9200/mcp
+#
+#  The MCP proxy is a C++ component inside Chromium that
+#  enforces a localhost check by default. 
+#
+#  Ollama is configured as an EXTERNAL service at
+#  started by this stack.
+# ===========================================================
+
+services:
+  browseros:
+    build:
+      context: .
+      dockerfile_inline: >
+        # ---- Stage 1: fetch & extract AppImage ----
+
+        FROM ubuntu:24.04 AS fetcher
+
+        RUN apt-get update && \
+            apt-get install -y --no-install-recommends wget ca-certificates && \
+            rm -rf /var/lib/apt/lists/*
+        WORKDIR /opt
+
+        RUN wget -q -O BrowserOS.AppImage \
+              "https://files.browseros.com/download/BrowserOS.AppImage" && \
+            chmod +x BrowserOS.AppImage && \
+            ./BrowserOS.AppImage --appimage-extract && \
+            rm BrowserOS.AppImage
+
+        # ---- Stage 2: runtime ----
+
+        FROM ubuntu:24.04
+
+        ENV DEBIAN_FRONTEND=noninteractive
+
+
+        # Core dependencies for Chromium + virtual display + VNC
+
+        RUN apt-get update && apt-get install -y --no-install-recommends \
+              xvfb \
+              x11vnc \
+              novnc \
+              websockify \
+              supervisor \
+              libnss3 \
+              libatk1.0-0 \
+              libatk-bridge2.0-0 \
+              libcups2 \
+              libdrm2 \
+              libxkbcommon0 \
+              libxcomposite1 \
+              libxdamage1 \
+              libxrandr2 \
+              libgbm1 \
+              libasound2t64 \
+              libpango-1.0-0 \
+              libcairo2 \
+              libgdk-pixbuf-2.0-0 \
+              libgtk-3-0 \
+              libxss1 \
+              libxtst6 \
+              libx11-xcb1 \
+              fonts-liberation \
+              fonts-noto-color-emoji \
+               dbus \
+               xdg-utils \
+               procps \
+               netcat-openbsd \
+               ca-certificates \
+              libstdc++6 \
+              libunwind8 \
+              curl \
+            && rm -rf /var/lib/apt/lists/*
+
+        # Copy extracted AppImage from fetcher
+
+        COPY --from=fetcher /opt/squashfs-root /opt/browseros
+
+
+        # Ensure the BrowserOS sidecar server binary is executable
+
+        RUN find /opt/browseros -name "browseros_server" -type f -exec chmod +x {} \; && \
+            find /opt/browseros -name "bun" -type f -exec chmod +x {} \; && \
+            find /opt/browseros -path "*/BrowserOSServer*" -type f -exec chmod +x {} \;
+
+
+        # Redirect / → /vnc.html and suppress directory listings in all subdirs
+
+        # (base64-encoded HTML survives YAML/shell escaping intact)
+
+        RUN echo PCFET0NUWVBFIGh0bWw+PGh0bWw+PGhlYWQ+PG1ldGEgaHR0cC1lcXVpdj0icmVmcmVzaCIgY29udGVudD0iMDt1cmw9L3ZuYy5odG1sIj48L2hlYWQ+PGJvZHk+UmVkaXJlY3RpbmcuLi48L2JvZHk+PC9odG1sPgo= | base64 -d > /usr/share/novnc/index.html && \
+            find /usr/share/novnc -mindepth 1 -type d -exec cp /usr/share/novnc/index.html {}/index.html \;
+
+        # Create a wrapper script for websockify that waits for x11vnc
+
+        RUN printf '#!/bin/sh\nwhile ! nc -z localhost 5900; do sleep 1; done\nexec /usr/bin/websockify --web /usr/share/novnc 6080 localhost:5900\n' > /usr/local/bin/start-novnc.sh && \
+            chmod +x /usr/local/bin/start-novnc.sh
+
+        # Create supervisord config inline
+
+        RUN mkdir -p /var/log/supervisor && \
+            cat > /etc/supervisor/conf.d/browseros.conf <<'SVCEOF'
+        [supervisord]
+
+        nodaemon=true
+
+        logfile=/var/log/supervisor/supervisord.log
+
+        pidfile=/var/run/supervisord.pid
+
+
+        [program:xvfb]
+
+        command=/usr/bin/Xvfb :99 -screen 0 %(ENV_RESOLUTION)s -ac +extension GLX +render -noreset
+
+        autorestart=true
+
+        priority=10
+
+
+        [program:x11vnc]
+
+        command=/usr/bin/x11vnc -display :99 -forever -shared -rfbport 5900 -nopw
+
+        autorestart=true
+
+        priority=20
+
+        startsecs=2
+
+
+        [program:novnc]
+
+        command=/usr/local/bin/start-novnc.sh
+
+        autorestart=true
+
+        priority=30
+
+        startsecs=5
+
+        startretries=5
+
+
+        [program:dbus]
+
+        command=/usr/bin/dbus-daemon --system --nofork
+
+        autorestart=true
+
+        priority=5
+
+
+        [program:browseros]
+
+        command=/opt/browseros/AppRun
+            --no-sandbox           
+        environment=DISPLAY=":99",HOME="/root"
+
+        autorestart=true
+
+        priority=40
+
+        startretries=5
+
+        startsecs=5
+
+        SVCEOF
+
+
+        ENV DISPLAY=:99
+
+        ENV RESOLUTION=1920x1080x24
+
+        EXPOSE 6080 9200
+
+
+        CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/browseros.conf"]
+    container_name: browseros
+    restart: unless-stopped
+    ports:
+      - 6080:6080 # noVNC web GUI
+      - 9200:9200 # MCP Server
+    environment:
+      - DISPLAY=:99
+      - RESOLUTION=1920x1080x24
+    shm_size: 2gb
+    security_opt:
+      - seccomp:unconfined
+    healthcheck:
+      test:
+        - CMD
+        - nc
+        - -z
+        - localhost
+        - "6080"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+networks: {}
