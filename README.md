@@ -16,7 +16,7 @@ BrowserOS is an AI-native Chromium browser packaged as a self-contained Docker s
 - (Recommended) **Dockge** or Portainer for stack management.
 
 ### 2. Deployment
-Save the `docker-compose.yml` file to your server and run:
+Save the `browseros-compose.yaml` file to your server and run:
 
 ```bash
 docker compose up -d
@@ -33,7 +33,7 @@ Once the container is healthy, you can access BrowserOS at the following endpoin
 
 ## ⚙️ Configuration
 
-You can customize the environment variables in the `docker-compose.yml` file:
+You can customize the environment variables in the `browseros-compose.yaml` file:
 
 - **RESOLUTION**: Set the virtual display size (default: `1920x1080x24`).
 - **shm_size**: Set to `2gb` to prevent Chromium crashes on heavy pages.
