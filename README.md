@@ -19,7 +19,7 @@ BrowserOS is an AI-native Chromium browser packaged as a self-contained Docker s
 Save the `browseros-compose.yaml` file to your server and run:
 
 ```bash
-docker compose up -d
+docker compose -f browseros-compose.yaml up
 ```
 
 ### 3. Accessing the Stack
