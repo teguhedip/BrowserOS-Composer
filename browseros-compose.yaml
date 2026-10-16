@@ -29,7 +29,7 @@ services:
         WORKDIR /opt
 
         RUN wget -q -O BrowserOS.AppImage \
-              "https://files.browseros.com/download/BrowserOS.AppImage" && \
+              "https://cdn.browseros.com/download/BrowserOS_neo.AppImage" && \
             chmod +x BrowserOS.AppImage && \
             ./BrowserOS.AppImage --appimage-extract && \
             rm BrowserOS.AppImage
